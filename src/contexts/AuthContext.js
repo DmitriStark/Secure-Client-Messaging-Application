@@ -1,27 +1,26 @@
-import React, { createContext, useState, useEffect } from 'react';
-import axios from 'axios';
+import React, { createContext, useState, useEffect } from "react";
+import axios from "axios";
 
-// Create auth context
 export const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
   const [currentUser, setCurrentUser] = useState(null);
-  const [token, setToken] = useState(localStorage.getItem('token') || '');
+  const [token, setToken] = useState(localStorage.getItem("token") || "");
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [error, setError] = useState("");
 
-  // Set auth token for all requests
   useEffect(() => {
     if (token) {
-      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-      localStorage.setItem('token', token);
+      axios.defaults.headers.common["Authorization"] = `Bearer ${token}`;
+      localStorage.setItem("token", token);
+      console.log("Auth token set in axios headers");
     } else {
-      delete axios.defaults.headers.common['Authorization'];
-      localStorage.removeItem('token');
+      delete axios.defaults.headers.common["Authorization"];
+      localStorage.removeItem("token");
+      console.log("Auth token removed from axios headers");
     }
   }, [token]);
 
-  // Verify token on initial load
   useEffect(() => {
     const verifyUser = async () => {
       if (!token) {
@@ -30,20 +29,18 @@ export const AuthProvider = ({ children }) => {
       }
 
       try {
-        const res = await axios.post('/api/auth/verify', { token });
-        
+        const res = await axios.post("/api/auth/verify", { token });
+
         if (res.data.valid) {
-          // Get user profile
-          const profileRes = await axios.get('/api/auth/profile');
+          const profileRes = await axios.get("/api/auth/profile");
           setCurrentUser(profileRes.data);
         } else {
-          // Token invalid or expired
-          setToken('');
+          setToken("");
           setCurrentUser(null);
         }
       } catch (err) {
-        console.error('Authentication error:', err);
-        setToken('');
+        console.error("Authentication error:", err);
+        setToken("");
         setCurrentUser(null);
       } finally {
         setLoading(false);
@@ -53,50 +50,70 @@ export const AuthProvider = ({ children }) => {
     verifyUser();
   }, [token]);
 
-  // Register a new user
   const register = async (username, password, publicKey) => {
     try {
-      setError('');
-      const res = await axios.post('/api/auth/register', {
+      setError("");
+      const res = await axios.post("/api/auth/register", {
         username,
         password,
-        publicKey
+        publicKey,
       });
 
-      setToken(res.data.token);
-      setCurrentUser(res.data);
+      console.log("Registration successful:", res.data);
+
+      const authToken = res.data.token;
+      setToken(authToken);
+
+      setCurrentUser({
+        username: res.data.username,
+      });
+
       return res.data;
     } catch (err) {
-      setError(err.response?.data?.message || 'Registration failed');
+      console.error("Registration error:", err);
+      setError(err.response?.data?.message || "Registration failed");
       throw err;
     }
   };
 
-  // Login user
   const login = async (username, password) => {
     try {
-      setError('');
-      const res = await axios.post('/api/auth/login', {
+      setError("");
+      const res = await axios.post("/api/auth/login", {
         username,
-        password
+        password,
       });
 
-      setToken(res.data.token);
-      setCurrentUser(res.data);
+      console.log("Login successful:", res.data);
+
+      const authToken = res.data.token;
+      setToken(authToken);
+
+      setCurrentUser({
+        username: res.data.username,
+      });
+
       return res.data;
     } catch (err) {
-      setError(err.response?.data?.message || 'Login failed');
+      console.error("Login error:", err);
+      setError(err.response?.data?.message || "Login failed");
       throw err;
     }
   };
 
-  // Logout user
-  const logout = () => {
-    setToken('');
-    setCurrentUser(null);
+  const logout = async () => {
+    try {
+      if (token) {
+        await axios.post("/api/auth/logout");
+      }
+    } catch (err) {
+      console.warn("Error during logout:", err);
+    } finally {
+      setToken("");
+      setCurrentUser(null);
+    }
   };
 
-  // Context value
   const value = {
     currentUser,
     token,
@@ -104,14 +121,10 @@ export const AuthProvider = ({ children }) => {
     error,
     register,
     login,
-    logout
+    logout,
   };
 
-  return (
-    <AuthContext.Provider value={value}>
-      {children}
-    </AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
 
 export default AuthContext;

@@ -1,7 +1,7 @@
-import React, { useContext } from 'react';
-import { Navbar, Container, Nav, Button } from 'react-bootstrap';
-import { Link, useNavigate } from 'react-router-dom';
-import AuthContext from '../contexts/AuthContext';
+import React, { useContext } from "react";
+import { Navbar, Container, Nav, Button } from "react-bootstrap";
+import { Link, useNavigate } from "react-router-dom";
+import AuthContext from "../contexts/AuthContext";
 
 const Header = () => {
   const { currentUser, logout } = useContext(AuthContext);
@@ -9,7 +9,7 @@ const Header = () => {
 
   const handleLogout = () => {
     logout();
-    navigate('/login');
+    navigate("/login");
   };
 
   return (
@@ -23,20 +23,30 @@ const Header = () => {
           <Nav className="ms-auto">
             {currentUser ? (
               <>
-                <Nav.Link as={Link} to="/chat">Chat</Nav.Link>
+                <Nav.Link as={Link} to="/chat">
+                  Chat
+                </Nav.Link>
                 <Nav.Item className="d-flex align-items-center ms-2">
                   <span className="text-light me-3">
                     Logged in as: <strong>{currentUser.username}</strong>
                   </span>
-                  <Button variant="outline-light" size="sm" onClick={handleLogout}>
+                  <Button
+                    variant="outline-light"
+                    size="sm"
+                    onClick={handleLogout}
+                  >
                     Logout
                   </Button>
                 </Nav.Item>
               </>
             ) : (
               <>
-                <Nav.Link as={Link} to="/login">Login</Nav.Link>
-                <Nav.Link as={Link} to="/register">Register</Nav.Link>
+                <Nav.Link as={Link} to="/login">
+                  Login
+                </Nav.Link>
+                <Nav.Link as={Link} to="/register">
+                  Register
+                </Nav.Link>
               </>
             )}
           </Nav>

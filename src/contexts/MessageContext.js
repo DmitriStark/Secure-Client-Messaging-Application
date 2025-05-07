@@ -4,12 +4,12 @@ import React, {
   useEffect,
   useContext,
   useCallback,
+  useRef,
 } from "react";
 import axios from "axios";
 import AuthContext from "./AuthContext";
 import CryptoContext from "./CryptoContext";
 
-// Create message context
 export const MessageContext = createContext();
 
 export const MessageProvider = ({ children }) => {
@@ -29,75 +29,63 @@ export const MessageProvider = ({ children }) => {
   const [decryptedMessages, setDecryptedMessages] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [isPolling, setIsPolling] = useState(false);
 
-  // Cache for users' public keys
   const [userPublicKeys, setUserPublicKeys] = useState({});
 
-  // Long polling for new messages
-  const startPolling = useCallback(async () => {
-    if (!currentUser || !token || !keyPair) return;
+  const isMounted = useRef(true);
 
-    try {
-      const response = await axios.get("/api/messages/poll");
+  const initialDataFetched = useRef(false);
 
-      // Check if we received a message
-      if (response.data.type === "message") {
-        const newMessage = response.data.data;
-
-        // Add the new message to the state
-        setMessages((prevMessages) => [newMessage, ...prevMessages]);
-
-        // Try to decrypt the message if it's for us
-        if (
-          newMessage.recipientKeys &&
-          newMessage.recipientKeys[currentUser.username]
-        ) {
-          try {
-            // Decrypt the symmetric key
-            const encryptedSymKey =
-              newMessage.recipientKeys[currentUser.username];
-            const symmetricKey = await decryptWithRSA(
-              keyPair.privateKey,
-              encryptedSymKey
-            );
-
-            // Use the symmetric key to decrypt the message
-            await decryptMessageContent(newMessage, symmetricKey);
-          } catch (error) {
-            console.error("Failed to decrypt incoming message:", error);
-          }
-        }
-      }
-
-      // Restart polling
-      startPolling();
-    } catch (err) {
-      console.error("Polling error:", err);
-
-      // Wait a bit before restarting polling on error
-      setTimeout(() => {
-        startPolling();
-      }, 5000);
-    }
-  }, [currentUser, token, keyPair, decryptWithRSA]);
-
-  // Start polling when user is authenticated
   useEffect(() => {
-    if (currentUser && token && keyPair) {
-      startPolling();
+    return () => {
+      isMounted.current = false;
+    };
+  }, []);
+
+  const decryptMessageContent = useCallback(
+    async (message, keyHex) => {
+      try {
+        const key = await importAESKey(keyHex);
+
+        const decryptedContent = await decryptWithAES(
+          key,
+          message.encryptedContent,
+          message.iv
+        );
+
+        setDecryptedMessages((prev) => ({
+          ...prev,
+          [message._id]: decryptedContent,
+        }));
+
+        return decryptedContent;
+      } catch (err) {
+        console.error("Error decrypting message:", err);
+        return null;
+      }
+    },
+    [importAESKey, decryptWithAES]
+  );
+
+  const fetchUserPublicKeys = useCallback(async () => {
+    if (!currentUser || !token) {
+      console.log("Cannot fetch public keys: not authenticated");
+      return {};
     }
 
-    return () => {
-      // Cleanup logic if needed
-    };
-  }, [currentUser, token, keyPair, startPolling]);
-
-  // Fetch users' public keys
-  const fetchUserPublicKeys = async () => {
-    if (!currentUser || !token) return;
-
     try {
-      const response = await axios.get("/api/keys/users");
+      console.log(
+        "Fetching user public keys with token:",
+        token.substring(0, 15) + "..."
+      );
+
+      const response = await axios.get("/api/keys/users", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
       const keysMap = {};
 
       response.data.users.forEach((user) => {
@@ -111,42 +99,49 @@ export const MessageProvider = ({ children }) => {
       setError("Failed to fetch user public keys");
       return {};
     }
-  };
+  }, [currentUser, token, setError]);
 
-  // Fetch message history
-  const fetchMessages = async () => {
-    if (!currentUser || !token) return;
+  const fetchMessages = useCallback(async () => {
+    if (!currentUser || !token) {
+      console.log("Cannot fetch messages: not authenticated");
+      return;
+    }
 
     try {
       setLoading(true);
       setError("");
 
-      // Make sure we have public keys
-      const publicKeys = Object.keys(userPublicKeys).length
-        ? userPublicKeys
-        : await fetchUserPublicKeys();
+      let publicKeys = userPublicKeys;
+      if (Object.keys(publicKeys).length === 0) {
+        publicKeys = await fetchUserPublicKeys();
+      }
 
-      const response = await axios.get("/api/messages/history");
-      setMessages(response.data.messages);
+      const response = await axios.get("/api/messages/history", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
 
-      // Try to decrypt messages
-      for (const message of response.data.messages) {
-        if (
-          message.recipientKeys &&
-          message.recipientKeys[currentUser.username]
-        ) {
-          try {
-            // Decrypt the symmetric key
-            const encryptedSymKey = message.recipientKeys[currentUser.username];
-            const symmetricKey = await decryptWithRSA(
-              keyPair.privateKey,
-              encryptedSymKey
-            );
+      setMessages(response.data.messages || []);
 
-            // Use the symmetric key to decrypt the message
-            await decryptMessageContent(message, symmetricKey);
-          } catch (error) {
-            console.error(`Failed to decrypt message ${message._id}:`, error);
+      if (response.data.messages && response.data.messages.length > 0) {
+        for (const message of response.data.messages) {
+          if (
+            message.recipientKeys &&
+            message.recipientKeys[currentUser.username]
+          ) {
+            try {
+              const encryptedSymKey =
+                message.recipientKeys[currentUser.username];
+              const symmetricKey = await decryptWithRSA(
+                keyPair.privateKey,
+                encryptedSymKey
+              );
+
+              await decryptMessageContent(message, symmetricKey);
+            } catch (error) {
+              console.error(`Failed to decrypt message ${message._id}:`, error);
+            }
           }
         }
       }
@@ -156,149 +151,228 @@ export const MessageProvider = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [
+    currentUser,
+    token,
+    userPublicKeys,
+    keyPair,
+    decryptWithRSA,
+    decryptMessageContent,
+    fetchUserPublicKeys,
+  ]);
 
-  // Fetch messages when user logs in
+  const startPolling = useCallback(async () => {
+    if (!currentUser || !token || !keyPair || isPolling || !isMounted.current)
+      return;
+
+    try {
+      setIsPolling(true);
+
+      const response = await axios.get("/api/messages/poll", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (isMounted.current) {
+        setIsPolling(false);
+      } else {
+        return;
+      }
+
+      if (response.data.type === "message") {
+        const newMessage = response.data.data;
+
+        setMessages((prevMessages) => [newMessage, ...prevMessages]);
+
+        if (
+          newMessage.recipientKeys &&
+          newMessage.recipientKeys[currentUser.username]
+        ) {
+          try {
+            const encryptedSymKey =
+              newMessage.recipientKeys[currentUser.username];
+            const symmetricKey = await decryptWithRSA(
+              keyPair.privateKey,
+              encryptedSymKey
+            );
+
+            await decryptMessageContent(newMessage, symmetricKey);
+          } catch (error) {
+            console.error("Failed to decrypt incoming message:", error);
+          }
+        }
+      }
+
+      setTimeout(() => {
+        if (isMounted.current) {
+          startPolling();
+        }
+      }, 500);
+    } catch (err) {
+      console.error("Polling error:", err);
+
+      if (isMounted.current) {
+        setIsPolling(false);
+
+        setTimeout(() => {
+          if (isMounted.current && currentUser && token) {
+            startPolling();
+          }
+        }, 5000);
+      }
+    }
+  }, [
+    currentUser,
+    token,
+    keyPair,
+    isPolling,
+    decryptWithRSA,
+    decryptMessageContent,
+  ]);
+
   useEffect(() => {
-    if (currentUser && token && keyPair) {
-      fetchUserPublicKeys().then(() => fetchMessages());
-    } else {
+    setIsPolling(false);
+
+    if (currentUser && token && keyPair && !isPolling) {
+      console.log("Starting message polling...");
+      startPolling();
+    }
+
+    return () => {
+      setIsPolling(false);
+    };
+  }, [currentUser, token, keyPair, startPolling, isPolling]);
+
+  useEffect(() => {
+    if (currentUser && token && keyPair && !initialDataFetched.current) {
+      console.log("Authenticated, fetching initial data...");
+      initialDataFetched.current = true;
+      setTimeout(() => {
+        fetchUserPublicKeys().then(() => fetchMessages());
+      }, 500);
+    } else if (!currentUser || !token || !keyPair) {
+      initialDataFetched.current = false;
       setMessages([]);
       setDecryptedMessages({});
     }
-  }, [currentUser, token, keyPair]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser, token, keyPair]); //had to do here eslint disable rules because other wise infinity message load
 
-  // Decrypt message content
-  const decryptMessageContent = async (message, keyHex) => {
-    try {
-      // Import the AES key
-      const key = await importAESKey(keyHex);
+  const sendMessage = useCallback(
+    async (content) => {
+      if (!currentUser || !token || !keyPair || !serverPublicKey) {
+        setError("Not authenticated or missing encryption keys");
+        return;
+      }
 
-      // Decrypt the message
-      const decryptedContent = await decryptWithAES(
-        key,
-        message.encryptedContent,
-        message.iv
-      );
+      try {
+        setLoading(true);
+        setError("");
 
-      // Store the decrypted content
-      setDecryptedMessages((prev) => ({
-        ...prev,
-        [message._id]: decryptedContent,
-      }));
+        let publicKeys = userPublicKeys;
+        if (Object.keys(publicKeys).length === 0) {
+          publicKeys = await fetchUserPublicKeys();
+        }
 
-      return decryptedContent;
-    } catch (err) {
-      console.error("Error decrypting message:", err);
-      return null;
-    }
-  };
+        const { key, keyHex } = await generateAESKey();
 
-  // Send a new message
- // Modified sendMessage function for MessageContext.js
+        const { encryptedContent, iv } = await encryptWithAES(key, content);
 
-const sendMessage = async (content) => {
-  if (!currentUser || !token || !keyPair || !serverPublicKey) {
-    setError("Not authenticated or missing encryption keys");
-    return;
-  }
+        const recipientKeys = {};
 
-  try {
-    setLoading(true);
-    setError("");
+        for (const [username, publicKey] of Object.entries(publicKeys)) {
+          recipientKeys[username] = await encryptWithRSA(publicKey, keyHex);
+        }
 
-    // Make sure we have public keys for all users
-    const publicKeys = Object.keys(userPublicKeys).length
-      ? userPublicKeys
-      : await fetchUserPublicKeys();
+        const response = await axios.post(
+          "/api/messages/send",
+          {
+            encryptedContent,
+            iv,
+            recipientKeys,
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          }
+        );
 
-    // Generate a symmetric key for this message
-    const { key, keyHex } = await generateAESKey();
+        const newMessage = {
+          _id: response.data.messageId,
+          sender: currentUser.username,
+          timestamp: new Date().toISOString(),
+          encryptedContent,
+          iv,
+          recipientKeys,
+        };
 
-    // Encrypt the message content with AES
-    const { encryptedContent, iv } = await encryptWithAES(key, content);
+        setMessages((prevMessages) => [newMessage, ...prevMessages]);
 
-    // Encrypt the symmetric key with each recipient's public key
-    const recipientKeys = {};
+        setDecryptedMessages((prev) => ({
+          ...prev,
+          [response.data.messageId]: content,
+        }));
 
-    for (const [username, publicKey] of Object.entries(publicKeys)) {
-      recipientKeys[username] = await encryptWithRSA(publicKey, keyHex);
-    }
+        return response.data;
+      } catch (err) {
+        console.error("Error sending message:", err);
+        setError("Failed to send message");
+        throw err;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [
+      currentUser,
+      token,
+      keyPair,
+      serverPublicKey,
+      userPublicKeys,
+      fetchUserPublicKeys,
+      generateAESKey,
+      encryptWithAES,
+      encryptWithRSA,
+    ]
+  );
 
-    // Send the encrypted message to the server
-    const response = await axios.post("/api/messages/send", {
-      encryptedContent,
-      iv,
-      recipientKeys,
-    });
+  const tryDecryptMessage = useCallback(
+    async (messageId) => {
+      const message = messages.find((msg) => msg._id === messageId);
 
-    // Create a new message object with the response data
-    const newMessage = {
-      _id: response.data.messageId,
-      sender: currentUser.username,
-      timestamp: new Date().toISOString(),
-      encryptedContent,
-      iv,
-      recipientKeys,
-    };
+      if (
+        !message ||
+        !message.recipientKeys ||
+        !message.recipientKeys[currentUser.username]
+      ) {
+        return false;
+      }
 
-    // Update the messages array with the new message
-    setMessages((prevMessages) => [newMessage, ...prevMessages]);
+      try {
+        const encryptedSymKey = message.recipientKeys[currentUser.username];
+        const symmetricKey = await decryptWithRSA(
+          keyPair.privateKey,
+          encryptedSymKey
+        );
 
-    // Store the decrypted content for our own message
-    setDecryptedMessages((prev) => ({
-      ...prev,
-      [response.data.messageId]: content,
-    }));
+        const decrypted = await decryptMessageContent(message, symmetricKey);
+        return !!decrypted;
+      } catch (error) {
+        console.error(`Failed to decrypt message ${messageId}:`, error);
+        return false;
+      }
+    },
+    [messages, currentUser, keyPair, decryptWithRSA, decryptMessageContent]
+  );
 
-    // No need to start polling here, as we've already added the message
-    // startPolling();
+  const getDecryptedContent = useCallback(
+    (messageId) => {
+      return decryptedMessages[messageId] || null;
+    },
+    [decryptedMessages]
+  );
 
-    // Success!
-    return response.data;
-  } catch (err) {
-    console.error("Error sending message:", err);
-    setError("Failed to send message");
-    throw err;
-  } finally {
-    setLoading(false);
-  }
-};
-  // Get decrypted message content
-  const getDecryptedContent = (messageId) => {
-    return decryptedMessages[messageId] || null;
-  };
-
-  // Try to decrypt a specific message from the UI
-  const tryDecryptMessage = async (messageId) => {
-    const message = messages.find((msg) => msg._id === messageId);
-
-    if (
-      !message ||
-      !message.recipientKeys ||
-      !message.recipientKeys[currentUser.username]
-    ) {
-      return false;
-    }
-
-    try {
-      // Decrypt the symmetric key
-      const encryptedSymKey = message.recipientKeys[currentUser.username];
-      const symmetricKey = await decryptWithRSA(
-        keyPair.privateKey,
-        encryptedSymKey
-      );
-
-      // Use the symmetric key to decrypt the message
-      const decrypted = await decryptMessageContent(message, symmetricKey);
-      return !!decrypted;
-    } catch (error) {
-      console.error(`Failed to decrypt message ${messageId}:`, error);
-      return false;
-    }
-  };
-
-  // Context value
   const value = {
     messages,
     decryptedMessages,
