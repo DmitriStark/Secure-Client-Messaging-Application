@@ -1,6 +1,6 @@
 # Secure Messaging Client
 
-A React-based front-end application for end-to-end encrypted messaging.
+A React-based front-end application for end-to-end encrypted messaging with advanced key management.
 
 ## Features
 
@@ -10,6 +10,11 @@ A React-based front-end application for end-to-end encrypted messaging.
 - **User Authentication**: Secure login/registration with JWT token management.
 - **Message Polling**: Real-time message delivery through long polling.
 - **Responsive Design**: Built with Bootstrap for a responsive, mobile-friendly interface.
+- **Key Versioning**: Support for multiple encryption keys with versioning.
+- **Key Sharing**: Share encryption keys securely between users.
+- **Message Key Sharing**: Share individual message keys with specific users.
+- **Key Backup & Restore**: Export and import keys for safekeeping and cross-device use.
+- **Multi-Key Decryption**: Automatically try all available keys to decrypt messages.
 
 ## Prerequisites
 
@@ -57,6 +62,9 @@ Manages cryptographic operations:
 - RSA encryption/decryption
 - AES key generation
 - AES encryption/decryption
+- Key versioning and management
+- Key sharing and importing
+- Key backup and restoration
 
 ### MessageContext
 
@@ -65,6 +73,8 @@ Manages messaging functionality:
 - Message polling
 - Message history
 - Message decryption
+- Message key management
+- Message key sharing
 
 ## Components
 
@@ -72,10 +82,18 @@ Manages messaging functionality:
 - **Header**: Navigation header with authentication status
 - **Register**: User registration form
 - **Login**: User login form
-- **ChatRoom**: Main messaging interface
+- **ChatRoom**: Main messaging interface with key management
 - **PrivateRoute**: Authentication-protected routes
 
 ## Cryptography Implementation
+
+### Key Management
+
+- **Key Versioning**: Each key pair is versioned with a unique ID and timestamp
+- **Multiple Keys**: Users can generate multiple keys and store them for future use
+- **Key Sharing**: Keys can be exported in a secure format and shared with trusted users
+- **Key Backup**: All keys can be exported to a backup file and restored when needed
+- **Key Import**: Keys from other users can be imported to decrypt their messages
 
 ### Key Generation
 
@@ -83,6 +101,7 @@ Manages messaging functionality:
 - Keys are properly formatted in PEM format with headers and footers
 - Public keys are shared with the server during registration
 - Private keys remain client-side only
+- New keys can be generated at any time without losing access to old messages
 
 ### Message Encryption
 
@@ -94,8 +113,29 @@ Manages messaging functionality:
 ### Message Decryption
 
 1. The client receives an encrypted message
-2. The client decrypts the AES key using their private RSA key
-3. The decrypted AES key is used to decrypt the message content
+2. The client attempts to decrypt the AES key using their current private RSA key
+3. If that fails, the client tries all available keys in the key store
+4. If decryption still fails, the user can import a specific key for that message
+5. The decrypted AES key is used to decrypt the message content
+
+## Key Sharing Features
+
+Our application now includes robust key sharing capabilities:
+
+### Key Management UI
+
+- **Key Dashboard**: View all your encryption keys with their creation dates and status
+- **Generate Keys**: Create new keys at any time with a single click
+- **Share Keys**: Export any of your keys to share with trusted contacts
+- **Import Keys**: Import keys shared by others to decrypt their messages
+- **Backup All Keys**: Export all your keys to a single backup file
+- **Restore from Backup**: Restore all your keys from a backup file
+
+### Message Key Sharing
+
+- **Share Per-Message**: Export the encryption key for a specific message
+- **Import Per-Message**: Import a key for a specific encrypted message
+- **Multi-Key Decryption**: Automatically try all available keys for any message
 
 ## Best Practices
 
@@ -104,6 +144,8 @@ Manages messaging functionality:
 - Validate all user inputs
 - Handle authentication errors gracefully
 - Implement proper loading states
+- Backup your encryption keys regularly
+- Share keys only through secure channels
 
 ## Security Considerations
 
@@ -113,6 +155,7 @@ While this application implements strong encryption, there are some aspects that
 - No perfect forward secrecy implementation
 - Password requirements could be strengthened
 - No multi-factor authentication
+- Key sharing should ideally occur through a separate secure channel
 
 ## Development and Extension
 
@@ -120,9 +163,10 @@ To extend this application:
 
 1. **Adding Contacts/Groups**: Implement contact management and group messaging
 2. **Message Attachments**: Add support for encrypted file transfers
-3. **Key Rotation**: Implement key rotation for improved security
+3. **Key Rotation**: Implement automated key rotation for improved security
 4. **Offline Support**: Add offline capabilities with message queuing
 5. **Enhanced UI**: Add themes, message formatting, and emoji support
+6. **Secure Key Exchange**: Implement a more secure key exchange protocol
 
 ## Building for Production
 
